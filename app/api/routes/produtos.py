@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_current_user
@@ -19,7 +20,11 @@ def criar_produto(
 ):
     produto = Produto(**data.model_dump())
     db.add(produto)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Não foi possível cadastrar o produto.") from None
     db.refresh(produto)
     return produto
 
@@ -29,7 +34,9 @@ def listar_produtos(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    return db.scalars(select(Produto).order_by(Produto.id)).all()
+    return db.scalars(
+        select(Produto).where(Produto.ativo.is_(True)).order_by(Produto.id)
+    ).all()
 
 
 @router.get("/{produto_id}", response_model=ProdutoResponse)
@@ -39,7 +46,7 @@ def buscar_produto(
     _: User = Depends(get_current_user),
 ):
     produto = db.get(Produto, produto_id)
-    if not produto:
+    if not produto or not produto.ativo:
         raise HTTPException(status_code=404, detail="Produto não encontrado.")
     return produto
 
@@ -52,13 +59,21 @@ def atualizar_produto(
     _: User = Depends(get_current_user),
 ):
     produto = db.get(Produto, produto_id)
-    if not produto:
+    if not produto or not produto.ativo:
         raise HTTPException(status_code=404, detail="Produto não encontrado.")
 
-    for campo, valor in data.model_dump(exclude_unset=True).items():
+    atualizacoes = data.model_dump(exclude_unset=True)
+    if not atualizacoes:
+        raise HTTPException(status_code=422, detail="Informe ao menos um campo para atualizar.")
+
+    for campo, valor in atualizacoes.items():
         setattr(produto, campo, valor)
 
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=422, detail="Os dados informados não são válidos.") from None
     db.refresh(produto)
     return produto
 
@@ -70,7 +85,7 @@ def remover_produto(
     _: User = Depends(get_current_user),
 ):
     produto = db.get(Produto, produto_id)
-    if not produto:
+    if not produto or not produto.ativo:
         raise HTTPException(status_code=404, detail="Produto não encontrado.")
 
     produto.ativo = False

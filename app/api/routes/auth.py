@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_current_user
@@ -14,16 +15,18 @@ router = APIRouter(prefix="/auth", tags=["Autenticação"])
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 def register(data: UserCreate, db: Session = Depends(get_db)):
-    existing = db.scalar(select(User).where(User.email == data.email))
+    email = str(data.email).strip().lower()
+    existing = db.scalar(select(User).where(User.email == email))
     if existing:
-        raise HTTPException(status_code=409, detail="E-mail já cadastrado.")
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="E-mail já cadastrado.")
 
-    user = User(
-        email=data.email,
-        password_hash=hash_password(data.password),
-    )
+    user = User(email=email, password_hash=hash_password(data.password))
     db.add(user)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="E-mail já cadastrado.") from None
     db.refresh(user)
     return user
 
@@ -33,17 +36,21 @@ def login(
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db),
 ):
-    user = db.scalar(select(User).where(User.email == form_data.username))
+    email = form_data.username.strip().lower()
+    user = db.scalar(select(User).where(User.email == email))
 
-    if not user or not verify_password(form_data.password, user.password_hash):
+    if (
+        not user
+        or not user.is_active
+        or not verify_password(form_data.password, user.password_hash)
+    ):
         raise HTTPException(
-            status_code=401,
+            status_code=status.HTTP_401_UNAUTHORIZED,
             detail="E-mail ou senha inválidos.",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    token = create_access_token(str(user.id))
-    return {"access_token": token, "token_type": "bearer"}
+    return {"access_token": create_access_token(str(user.id)), "token_type": "bearer"}
 
 
 @router.get("/me", response_model=UserResponse)

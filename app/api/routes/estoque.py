@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_current_user
@@ -18,14 +19,17 @@ def movimentar_estoque(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    produto = db.get(Produto, produto_id)
-
+    # No PostgreSQL, bloqueia a linha durante a transação para reduzir disputas
+    # entre saídas simultâneas do mesmo produto. SQLite ignora FOR UPDATE.
+    produto = db.scalar(
+        select(Produto).where(Produto.id == produto_id).with_for_update()
+    )
     if not produto or not produto.ativo:
         raise HTTPException(status_code=404, detail="Produto não encontrado.")
 
     if data.tipo == "saida" and data.quantidade > produto.estoque_atual:
         raise HTTPException(
-            status_code=422,
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Estoque insuficiente para realizar a saída.",
         )
 
@@ -40,9 +44,12 @@ def movimentar_estoque(
         quantidade=data.quantidade,
         observacao=data.observacao,
     )
-
     db.add(movimentacao)
-    db.commit()
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     db.refresh(movimentacao)
     return movimentacao
 
@@ -54,13 +61,11 @@ def listar_movimentacoes(
     _: User = Depends(get_current_user),
 ):
     produto = db.get(Produto, produto_id)
-
     if not produto:
         raise HTTPException(status_code=404, detail="Produto não encontrado.")
 
-    return (
-        db.query(Movimentacao)
-        .filter(Movimentacao.produto_id == produto_id)
+    return db.scalars(
+        select(Movimentacao)
+        .where(Movimentacao.produto_id == produto_id)
         .order_by(Movimentacao.id.desc())
-        .all()
-    )
+    ).all()

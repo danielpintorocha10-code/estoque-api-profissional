@@ -1,34 +1,23 @@
 # Estoque API
 
-API REST para gerenciamento de produtos e movimentações de estoque.
-
-## Tecnologias
-
-- Python
-- FastAPI
-- PostgreSQL
-- SQLAlchemy
-- Pydantic
-- JWT
-- Docker
-- Pytest
-- Swagger/OpenAPI
+API REST para gerenciamento de produtos e movimentações de estoque, construída com Python, FastAPI e PostgreSQL.
 
 ## Funcionalidades
 
-- Cadastro e login de usuários
-- Autenticação JWT
-- CRUD de produtos
-- Entrada e saída de estoque
-- Histórico de movimentações
-- Relatório de estoque baixo
-- Validação de dados
-- Soft delete de produtos
-- Documentação automática
+- Cadastro de usuários e autenticação JWT.
+- CRUD de produtos com exclusão lógica (soft delete).
+- Entradas e saídas de estoque com histórico de movimentações.
+- Validação de dados e prevenção de saída acima do saldo disponível.
+- Relatório de produtos com estoque baixo.
+- Documentação OpenAPI com Swagger UI e ReDoc.
 
-## Como executar localmente
+## Tecnologias
 
-### 1. Criar ambiente virtual
+Python 3.12+, FastAPI, SQLAlchemy 2, PostgreSQL 16, Pydantic, JWT, Docker e Pytest.
+
+## Configuração local (Windows PowerShell)
+
+### 1. Criar e ativar ambiente virtual
 
 ```powershell
 python -m venv .venv
@@ -38,28 +27,39 @@ python -m venv .venv
 ### 2. Instalar dependências
 
 ```powershell
+python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-### 3. Configurar ambiente
+### 3. Configurar variáveis de ambiente
 
-Copie `.env.example` para `.env` e ajuste os valores.
+```powershell
+Copy-Item .env.example .env
+```
 
-### 4. Subir PostgreSQL
+Edite `.env` e configure `SECRET_KEY` com uma chave aleatória de pelo menos 32 caracteres. Não publique o arquivo `.env` no GitHub. Para gerar uma chave no Python:
 
-Com Docker:
+```powershell
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+```
+
+### 4. Iniciar PostgreSQL
+
+Com Docker, configure `POSTGRES_PASSWORD` no `.env` e execute:
 
 ```powershell
 docker compose up -d db
 ```
 
-### 5. Criar tabelas
+A `DATABASE_URL` do `.env` deve apontar para `localhost:5432` quando a API roda fora do Docker.
 
-Nesta versão inicial, execute:
+### 5. Criar tabelas (configuração inicial)
 
 ```powershell
 python -c "from app.database.database import Base, engine; import app.models; Base.metadata.create_all(engine)"
 ```
+
+> Este comando é adequado para a configuração inicial deste projeto. Para evolução de schema em ambientes compartilhados/produção, implemente migrações com Alembic.
 
 ### 6. Executar API
 
@@ -67,30 +67,52 @@ python -c "from app.database.database import Base, engine; import app.models; Ba
 uvicorn app.main:app --reload
 ```
 
-Acesse:
-
 - API: http://127.0.0.1:8000
-- Swagger: http://127.0.0.1:8000/docs
+- Swagger UI: http://127.0.0.1:8000/docs
 - ReDoc: http://127.0.0.1:8000/redoc
 
-## Docker completo
+## Executar com Docker Compose
+
+Configure `SECRET_KEY` e `POSTGRES_PASSWORD` no `.env` antes de iniciar:
 
 ```powershell
 docker compose up --build
 ```
 
-## Testes
+A API fica disponível na porta 8000. O Compose aguarda o PostgreSQL passar no healthcheck antes de iniciar a aplicação.
+
+## Testes automatizados
+
+Os testes usam um banco SQLite isolado e não precisam de um PostgreSQL ativo:
 
 ```powershell
-pytest
+pytest -q
 ```
 
-## Próximas evoluções
+Eles cobrem health check, documentação OpenAPI, cadastro/login, autenticação, operações de produtos, exclusão lógica e movimentações de estoque.
 
-- Alembic para migrations
-- Paginação e filtros
-- Controle de permissões por usuário
-- Testes completos de autenticação e estoque
-- CI/CD com GitHub Actions
-- Logs estruturados
-- Auditoria
+## Principais endpoints
+
+| Método | Endpoint | Descrição |
+|---|---|---|
+| `POST` | `/auth/register` | Cadastrar usuário |
+| `POST` | `/auth/login` | Obter token JWT (formulário OAuth2: `username` = e-mail) |
+| `GET` | `/auth/me` | Consultar usuário autenticado |
+| `POST` | `/produtos` | Cadastrar produto |
+| `GET` | `/produtos` | Listar produtos ativos |
+| `GET` | `/produtos/{produto_id}` | Consultar produto ativo |
+| `PUT` | `/produtos/{produto_id}` | Atualizar produto |
+| `DELETE` | `/produtos/{produto_id}` | Desativar produto (soft delete) |
+| `POST` | `/estoque/{produto_id}/movimentacoes` | Registrar entrada ou saída |
+| `GET` | `/estoque/{produto_id}/movimentacoes` | Consultar histórico |
+| `GET` | `/relatorios/estoque-baixo` | Listar produtos no limite mínimo |
+
+As rotas de produtos, estoque e relatórios exigem `Authorization: Bearer <token>`.
+
+## Limites e próximas evoluções
+
+- Implementar migrações Alembic.
+- Adicionar paginação e filtros.
+- Criar permissões granulares por perfil.
+- Adicionar CI com GitHub Actions e logs estruturados.
+- Validar concorrência e transações também em testes de integração com PostgreSQL.
